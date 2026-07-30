@@ -16,6 +16,10 @@ type Rule struct {
 	// Priority controls draw order: layers with a higher priority are
 	// drawn after (on top of) layers with a lower one.
 	Priority int
+	// Width is the line thickness, in canvas dots, used for
+	// LineString features in this layer. It is ignored for polygon
+	// and point features. A width of 0 or 1 draws a plain 1-dot line.
+	Width float64
 }
 
 // Style holds the full set of rules used to render a map's base layers,
@@ -28,6 +32,11 @@ type Style struct {
 	// "footway"). Classes not listed here fall back to the layer's
 	// base Rule.Color.
 	RoadClasses map[string]braille.Color
+	// RoadWidths refines the line thickness (in canvas dots) of
+	// "road"/"transportation" features the same way RoadClasses
+	// refines their color. Classes not listed here fall back to the
+	// layer's base Rule.Width.
+	RoadWidths map[string]float64
 
 	// Background is used for cells with no matching feature.
 	Background braille.Color
@@ -35,9 +44,10 @@ type Style struct {
 	// top-level Map API.
 	PinColor      braille.Color
 	PinLabelColor braille.Color
-	// DefaultLineColor styles overlay lines that don't specify their
-	// own color.
+	// DefaultLineColor and DefaultLineWidth style overlay lines drawn
+	// via Map.DrawLine that don't specify their own color/width.
 	DefaultLineColor braille.Color
+	DefaultLineWidth float64
 }
 
 // Default returns a reasonable built-in style covering the common
@@ -49,7 +59,7 @@ func Default() *Style {
 			// Water.
 			"water":    {Color: braille.Color{R: 90, G: 140, B: 235}, Priority: 10},
 			"ocean":    {Color: braille.Color{R: 80, G: 130, B: 225}, Priority: 10},
-			"waterway": {Color: braille.Color{R: 90, G: 140, B: 235}, Priority: 11},
+			"waterway": {Color: braille.Color{R: 90, G: 140, B: 235}, Priority: 11, Width: 1},
 
 			// Land cover / land use.
 			"landcover": {Color: braille.Color{R: 195, G: 214, B: 178}, Priority: 5},
@@ -61,12 +71,12 @@ func Default() *Style {
 			// Infrastructure.
 			"aeroway":        {Color: braille.Color{R: 200, G: 160, B: 200}, Priority: 20},
 			"building":       {Color: braille.Color{R: 196, G: 176, B: 145}, Priority: 30},
-			"road":           {Color: braille.Color{R: 235, G: 235, B: 235}, Priority: 40},
-			"transportation": {Color: braille.Color{R: 235, G: 235, B: 235}, Priority: 40},
+			"road":           {Color: braille.Color{R: 235, G: 235, B: 235}, Priority: 40, Width: 1},
+			"transportation": {Color: braille.Color{R: 235, G: 235, B: 235}, Priority: 40, Width: 1},
 
 			// Boundaries, drawn last so they stay visible.
-			"boundary": {Color: braille.Color{R: 224, G: 130, B: 130}, Priority: 50},
-			"admin":    {Color: braille.Color{R: 224, G: 130, B: 130}, Priority: 50},
+			"boundary": {Color: braille.Color{R: 224, G: 130, B: 130}, Priority: 50, Width: 1},
+			"admin":    {Color: braille.Color{R: 224, G: 130, B: 130}, Priority: 50, Width: 1},
 		},
 		RoadClasses: map[string]braille.Color{
 			"motorway":   {R: 255, G: 170, B: 60},
@@ -82,10 +92,25 @@ func Default() *Style {
 			"track":      {R: 150, G: 150, B: 150},
 			"rail":       {R: 130, G: 130, B: 140},
 		},
+		RoadWidths: map[string]float64{
+			"motorway":   3,
+			"trunk":      2.5,
+			"primary":    2,
+			"secondary":  1.5,
+			"tertiary":   1,
+			"minor":      1,
+			"service":    1,
+			"path":       1,
+			"footway":    1,
+			"pedestrian": 1,
+			"track":      1,
+			"rail":       1,
+		},
 		Background:       braille.Color{R: 30, G: 33, B: 41},
 		PinColor:         braille.Color{R: 235, G: 70, B: 70},
 		PinLabelColor:    braille.Color{R: 240, G: 240, B: 240},
 		DefaultLineColor: braille.Color{R: 250, G: 210, B: 60},
+		DefaultLineWidth: 1,
 	}
 }
 
@@ -101,6 +126,16 @@ func (s *Style) Rule(layerName string) (Rule, bool) {
 func (s *Style) RoadColor(class string, fallback braille.Color) braille.Color {
 	if c, ok := s.RoadClasses[class]; ok {
 		return c
+	}
+	return fallback
+}
+
+// RoadWidth resolves the line thickness for a road/transportation
+// feature based on its class tag, falling back to fallback if the
+// class is unknown.
+func (s *Style) RoadWidth(class string, fallback float64) float64 {
+	if w, ok := s.RoadWidths[class]; ok {
+		return w
 	}
 	return fallback
 }

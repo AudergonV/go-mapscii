@@ -17,6 +17,8 @@ type Line struct {
 	Points   []LatLon
 	Color    braille.Color
 	hasColor bool
+	Width    float64
+	hasWidth bool
 }
 
 // LineOption configures a Line created by DrawLine.
@@ -28,6 +30,17 @@ func WithLineColor(c braille.Color) LineOption {
 	return func(l *Line) {
 		l.Color = c
 		l.hasColor = true
+	}
+}
+
+// WithLineWidth sets a custom thickness, in canvas dots, for a drawn
+// line, overriding the style's DefaultLineWidth. A width of 1 (the
+// default) draws a plain 1-dot line; larger values approximate a
+// thicker stroke by stacking parallel offset lines.
+func WithLineWidth(width float64) LineOption {
+	return func(l *Line) {
+		l.Width = width
+		l.hasWidth = true
 	}
 }
 

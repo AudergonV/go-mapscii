@@ -93,7 +93,10 @@ func main() {
 	m.DrawLine([]mapscii.LatLon{
 		{Lat: 48.8566, Lon: 2.3522},
 		{Lat: 48.8584, Lon: 2.2945},
-	}, mapscii.WithLineColor(braille.Color{R: 255, G: 80, B: 80}))
+	},
+		mapscii.WithLineColor(braille.Color{R: 255, G: 80, B: 80}),
+		mapscii.WithLineWidth(3), // thickness in canvas dots, default 1
+	)
 
 	frame, err := m.Render(context.Background())
 	if err != nil {
@@ -108,7 +111,7 @@ braille characters and 24-bit ANSI color escapes - print it directly, or
 diff it against the previous frame for smoother redraws in an
 interactive app.
 
-### Customizing colors
+### Customizing colors and line widths
 
 ```go
 import "github.com/audergonv/go-mapscii/style"
@@ -117,8 +120,19 @@ sty := style.Default()
 sty.Layers["water"] = style.Rule{Color: braille.Color{R: 20, G: 60, B: 120}, Priority: 10}
 sty.PinColor = braille.Color{R: 255, G: 200, B: 0}
 
+// Line thickness (in canvas dots) is just as configurable as color.
+sty.Layers["road"] = style.Rule{Color: sty.Layers["road"].Color, Priority: 40, Width: 2}
+sty.RoadWidths["motorway"] = 4    // refines "road"/"transportation" width by class/highway tag
+sty.DefaultLineWidth = 2          // default thickness for Map.DrawLine overlays
+
 m, err := mapscii.New(mapscii.Options{Provider: provider, Style: sty})
 ```
+
+Overlay lines drawn with `Map.DrawLine` can also set their own width
+per line via `mapscii.WithLineWidth(dots)`, overriding
+`Style.DefaultLineWidth` (see the earlier example). Widths are
+approximated by stacking parallel 1-dot lines - there's no
+anti-aliasing, but it reads well at terminal resolutions.
 
 ## Interactive demo
 

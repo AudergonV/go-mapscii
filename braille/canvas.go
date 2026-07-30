@@ -5,7 +5,10 @@
 // technique used by drawille and by mapscii's own Canvas.js.
 package braille
 
-import "strings"
+import (
+	"math"
+	"strings"
+)
 
 // brailleBase is the Unicode code point of the "all dots off" braille
 // pattern; individual dots are turned on by OR-ing a bit mask onto it.
@@ -165,6 +168,40 @@ func (c *Canvas) Line(x0, y0, x1, y1 int, color Color) {
 			err += dx
 			y += sy
 		}
+	}
+}
+
+// LineWidth draws a straight line between two sub-pixel coordinates
+// with the given thickness, expressed in dots. A width of 1 (or less)
+// behaves exactly like Line. Thicker lines are approximated by
+// stacking several 1-dot Bresenham lines offset perpendicular to the
+// line's direction; this has no anti-aliasing, but is cheap and looks
+// reasonable at the resolutions a terminal renders.
+func (c *Canvas) LineWidth(x0, y0, x1, y1 int, width float64, color Color) {
+	if width <= 1 {
+		c.Line(x0, y0, x1, y1, color)
+		return
+	}
+
+	dx, dy := float64(x1-x0), float64(y1-y0)
+	length := math.Hypot(dx, dy)
+	var nx, ny float64
+	if length == 0 {
+		nx, ny = 1, 0
+	} else {
+		nx, ny = -dy/length, dx/length
+	}
+
+	steps := int(math.Ceil(width))
+	half := width / 2
+	for i := 0; i < steps; i++ {
+		offset := 0.0
+		if steps > 1 {
+			offset = -half + half*2*float64(i)/float64(steps-1)
+		}
+		ox := int(math.Round(nx * offset))
+		oy := int(math.Round(ny * offset))
+		c.Line(x0+ox, y0+oy, x1+ox, y1+oy, color)
 	}
 }
 

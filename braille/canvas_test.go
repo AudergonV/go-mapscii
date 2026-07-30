@@ -67,6 +67,40 @@ func TestLineDrawsEndpoints(t *testing.T) {
 	}
 }
 
+func countLitDots(c *Canvas) int {
+	n := 0
+	for _, cl := range c.cells {
+		for b := cl.mask; b != 0; b &= b - 1 {
+			n++
+		}
+	}
+	return n
+}
+
+func TestLineWidthAtMostOneMatchesLine(t *testing.T) {
+	a := NewCanvas(6, 6)
+	a.Line(0, 0, a.Width()-1, a.Height()-1, Color{R: 1})
+
+	b := NewCanvas(6, 6)
+	b.LineWidth(0, 0, b.Width()-1, b.Height()-1, 1, Color{R: 1})
+
+	if countLitDots(a) != countLitDots(b) {
+		t.Errorf("LineWidth(width=1) lit %d dots, Line lit %d dots, want equal", countLitDots(b), countLitDots(a))
+	}
+}
+
+func TestLineWidthThickerCoversMoreDots(t *testing.T) {
+	thin := NewCanvas(10, 10)
+	thin.Line(0, thin.Height()/2, thin.Width()-1, thin.Height()/2, Color{R: 1})
+
+	thick := NewCanvas(10, 10)
+	thick.LineWidth(0, thick.Height()/2, thick.Width()-1, thick.Height()/2, 4, Color{R: 1})
+
+	if countLitDots(thick) <= countLitDots(thin) {
+		t.Errorf("expected thick line to light more dots than thin line: thick=%d thin=%d", countLitDots(thick), countLitDots(thin))
+	}
+}
+
 func TestTextOverridesDots(t *testing.T) {
 	c := NewCanvas(5, 1)
 	c.Set(0, 0, Color{R: 1})

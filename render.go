@@ -33,6 +33,7 @@ type drawCmd struct {
 	priority int
 	kind     geomKind
 	color    braille.Color
+	width    float64
 	parts    [][]dotPt
 }
 
@@ -144,8 +145,11 @@ func collectTileDrawCommands(
 
 				for _, feature := range layer.Features {
 					color := rule.Color
+					width := rule.Width
 					if isRoad {
-						color = sty.RoadColor(roadClass(feature), color)
+						class := roadClass(feature)
+						color = sty.RoadColor(class, color)
+						width = sty.RoadWidth(class, width)
 					}
 
 					parts := make([][]dotPt, 0, len(feature.Geometry))
@@ -174,6 +178,7 @@ func collectTileDrawCommands(
 						priority: rule.Priority,
 						kind:     kind,
 						color:    color,
+						width:    width,
 						parts:    parts,
 					})
 				}
@@ -203,7 +208,7 @@ func drawCommand(canvas *braille.Canvas, cmd drawCmd, maxX, maxY float64) {
 	case kindLine:
 		for _, part := range cmd.parts {
 			for i := 0; i+1 < len(part); i++ {
-				drawClippedLine(canvas, part[i], part[i+1], cmd.color, maxX, maxY)
+				drawClippedLine(canvas, part[i], part[i+1], cmd.color, cmd.width, maxX, maxY)
 			}
 		}
 	case kindPoint:
@@ -221,13 +226,17 @@ func drawOverlayLines(canvas *braille.Canvas, lines []*Line, sty *style.Style, z
 		if line.hasColor {
 			color = line.Color
 		}
+		width := sty.DefaultLineWidth
+		if line.hasWidth {
+			width = line.Width
+		}
 		var prev dotPt
 		has := false
 		for _, ll := range line.Points {
 			p := geo.LatLonToPoint(ll, zoom)
 			cur := dotPt{X: p.X - originX, Y: p.Y - originY}
 			if has {
-				drawClippedLine(canvas, prev, cur, color, maxX, maxY)
+				drawClippedLine(canvas, prev, cur, color, width, maxX, maxY)
 			}
 			prev, has = cur, true
 		}
@@ -256,12 +265,12 @@ func drawOverlayPins(canvas *braille.Canvas, pins []*Pin, sty *style.Style, zoom
 // it to the canvas's Bresenham line drawer, so that segments which
 // mostly lie far outside the viewport don't cost time proportional to
 // their (potentially huge) off-screen length.
-func drawClippedLine(canvas *braille.Canvas, a, b dotPt, color braille.Color, maxX, maxY float64) {
+func drawClippedLine(canvas *braille.Canvas, a, b dotPt, color braille.Color, width, maxX, maxY float64) {
 	x0, y0, x1, y1, ok := clipSegment(a.X, a.Y, b.X, b.Y, 0, 0, maxX, maxY)
 	if !ok {
 		return
 	}
-	canvas.Line(int(math.Round(x0)), int(math.Round(y0)), int(math.Round(x1)), int(math.Round(y1)), color)
+	canvas.LineWidth(int(math.Round(x0)), int(math.Round(y0)), int(math.Round(x1)), int(math.Round(y1)), width, color)
 }
 
 // clipSegment implements Cohen-Sutherland line clipping against the

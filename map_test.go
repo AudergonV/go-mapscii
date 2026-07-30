@@ -2,6 +2,7 @@ package mapscii
 
 import (
 	"context"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -188,5 +189,52 @@ func TestPanMovesCenter(t *testing.T) {
 	after := m.Center()
 	if after.Lon <= before.Lon {
 		t.Errorf("expected panning right to increase longitude: before=%v after=%v", before.Lon, after.Lon)
+	}
+}
+
+var ansiEscape = regexp.MustCompile("\x1b\\[[0-9;]*m")
+
+func countGlyphs(frame string) int {
+	stripped := ansiEscape.ReplaceAllString(frame, "")
+	n := 0
+	for _, r := range stripped {
+		if r != ' ' && r != '\n' {
+			n++
+		}
+	}
+	return n
+}
+
+func TestDrawLineWidthThickensRender(t *testing.T) {
+	// An empty provider means the only thing Render draws is the
+	// overlay line itself, so counting drawn glyphs directly measures
+	// how much of the canvas the line covers.
+	provider := tileprovider.NewMemoryProvider()
+
+	newLine := func(opts ...LineOption) string {
+		m, err := New(Options{
+			Provider: provider,
+			Width:    60,
+			Height:   30,
+			Center:   LatLon{Lat: 10, Lon: 10},
+			Zoom:     8,
+		})
+		if err != nil {
+			t.Fatalf("New: %v", err)
+		}
+		m.DrawLine([]LatLon{{Lat: 10.05, Lon: 9.9}, {Lat: 9.95, Lon: 10.1}}, opts...)
+		frame, err := m.Render(context.Background())
+		if err != nil {
+			t.Fatalf("Render: %v", err)
+		}
+		return frame
+	}
+
+	thin := newLine()
+	thick := newLine(WithLineWidth(6))
+
+	if countGlyphs(thick) <= countGlyphs(thin) {
+		t.Errorf("expected WithLineWidth(6) to draw more glyphs than the default width: thick=%d thin=%d",
+			countGlyphs(thick), countGlyphs(thin))
 	}
 }
