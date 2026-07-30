@@ -65,9 +65,10 @@ func (m *Map) Render(ctx context.Context) (string, error) {
 	}
 	scale := math.Pow(2, zoom-float64(tileZoom))
 
+	yScale := cv.YScale()
 	centerPoint := geo.LatLonToPoint(center, zoom)
 	originX := centerPoint.X - float64(cv.Width())/2
-	originY := centerPoint.Y - float64(cv.Height())/2
+	originY := centerPoint.Y*yScale - float64(cv.Height())/2
 
 	cmds, err := collectTileDrawCommands(ctx, provider, sty, tileZoom, scale, originX, originY, cv)
 	if err != nil {
@@ -102,10 +103,11 @@ func collectTileDrawCommands(
 	scale, originX, originY float64,
 	cv *canvas.Canvas,
 ) ([]drawCmd, error) {
+	yScale := cv.YScale()
 	worldOriginX := originX / scale
-	worldOriginY := originY / scale
+	worldOriginY := originY / (scale * yScale)
 	worldW := float64(cv.Width()) / scale
-	worldH := float64(cv.Height()) / scale
+	worldH := float64(cv.Height()) / (scale * yScale)
 
 	n := geo.TileCount(tileZoom)
 	minTileX := clampInt(int(math.Floor(worldOriginX/geo.TileSize)), 0, n-1)
@@ -134,7 +136,7 @@ func collectTileDrawCommands(
 				}
 				wx := tileOrigin.X + float64(p.X)/float64(extent)*geo.TileSize
 				wy := tileOrigin.Y + float64(p.Y)/float64(extent)*geo.TileSize
-				return dotPt{X: wx*scale - originX, Y: wy*scale - originY}
+				return dotPt{X: wx*scale - originX, Y: wy*scale*yScale - originY}
 			}
 
 			for _, layer := range tile.Layers {
@@ -222,6 +224,7 @@ func drawCommand(cv *canvas.Canvas, cmd drawCmd, maxX, maxY float64) {
 }
 
 func drawOverlayLines(cv *canvas.Canvas, lines []*Line, sty *style.Style, zoom, originX, originY, maxX, maxY float64) {
+	yScale := cv.YScale()
 	for _, line := range lines {
 		color := sty.DefaultLineColor
 		if line.hasColor {
@@ -235,7 +238,7 @@ func drawOverlayLines(cv *canvas.Canvas, lines []*Line, sty *style.Style, zoom, 
 		has := false
 		for _, ll := range line.Points {
 			p := geo.LatLonToPoint(ll, zoom)
-			cur := dotPt{X: p.X - originX, Y: p.Y - originY}
+			cur := dotPt{X: p.X - originX, Y: p.Y*yScale - originY}
 			if has {
 				drawClippedLine(cv, prev, cur, color, width, maxX, maxY)
 			}
@@ -245,13 +248,14 @@ func drawOverlayLines(cv *canvas.Canvas, lines []*Line, sty *style.Style, zoom, 
 }
 
 func drawOverlayPins(cv *canvas.Canvas, pins []*Pin, sty *style.Style, zoom, originX, originY float64) {
+	yScale := cv.YScale()
 	for _, pin := range pins {
 		markerColor := sty.PinColor
 		if pin.hasColor {
 			markerColor = pin.Color
 		}
 		p := geo.LatLonToPoint(pin.Pos, zoom)
-		dotX, dotY := p.X-originX, p.Y-originY
+		dotX, dotY := p.X-originX, p.Y*yScale-originY
 		cellX := int(math.Round(dotX)) / cv.DotsPerCellX()
 		cellY := int(math.Round(dotY)) / cv.DotsPerCellY()
 

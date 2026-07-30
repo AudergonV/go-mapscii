@@ -135,9 +135,18 @@ m.SetShape(canvas.ASCII)
 ```
 
 A Shape is just a small struct (dot grid size, a bit-mask function, a
-glyph-lookup function and a pin marker rune), so defining your own -
-sextants, a custom glyph ramp, whatever - only takes implementing
-`canvas.Shape`; see `canvas/shapes.go` for the reference implementations.
+glyph-lookup function, a pin marker rune, and an optional `YScale`), so
+defining your own - sextants, a custom glyph ramp, whatever - only
+takes implementing `canvas.Shape`; see `canvas/shapes.go` for the
+reference implementations.
+
+Terminal cells are roughly twice as tall as wide, and Braille's 2x4 dot
+grid already accounts for that (its dots come out square on screen).
+Blocks and ASCII use square dot grids (2x2 and 1x1), which would
+stretch the map vertically if left uncorrected - both set `YScale: 0.5`
+to compress the vertical world-to-dot mapping and keep geography
+proportioned correctly. Set `YScale` on a custom Shape too if its
+`DotsY/DotsX` ratio isn't 2.
 
 ### Customizing colors and line widths
 

@@ -35,6 +35,27 @@ type Shape struct {
 	Glyph func(mask byte) rune
 	// PinMarker is the rune used to mark a pin placed on the map.
 	PinMarker rune
+
+	// YScale corrects the map's vertical world-to-dot mapping for
+	// shapes whose dot grid isn't naturally square on a standard
+	// terminal cell (about twice as tall as wide). Braille's 2x4 grid
+	// already matches that aspect (DotsY/DotsX == 2, the same ratio
+	// as the cell itself), so it needs no correction. A shape with a
+	// squarer dot grid than that - like Blocks' 2x2 or ASCII's 1x1 -
+	// renders each dot physically taller than wide, which stretches
+	// the map vertically unless compensated by setting YScale below
+	// 1 to compress the vertical mapping by the same factor. 0 means
+	// "no correction" (equivalent to 1).
+	YScale float64
+}
+
+// VerticalScale returns YScale, defaulting to 1 (no correction) when
+// unset.
+func (s Shape) VerticalScale() float64 {
+	if s.YScale == 0 {
+		return 1
+	}
+	return s.YScale
 }
 
 type cell struct {
@@ -84,6 +105,10 @@ func (c *Canvas) Height() int { return c.rows * c.shape.DotsY }
 // DotsPerCellX and DotsPerCellY report the Shape's sub-pixel resolution.
 func (c *Canvas) DotsPerCellX() int { return c.shape.DotsX }
 func (c *Canvas) DotsPerCellY() int { return c.shape.DotsY }
+
+// YScale returns the Shape's vertical aspect-ratio correction; see
+// Shape.VerticalScale.
+func (c *Canvas) YScale() float64 { return c.shape.VerticalScale() }
 
 // PinMarker returns the rune this canvas's Shape uses to mark a pin,
 // falling back to "●" if the Shape didn't set one.

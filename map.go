@@ -158,7 +158,7 @@ func (m *Map) Pan(dxCells, dyCells float64) {
 	}
 	center := geo.LatLonToPoint(m.center, m.zoom)
 	center.X += dxCells * float64(m.shape.DotsX)
-	center.Y += dyCells * float64(m.shape.DotsY)
+	center.Y += dyCells * float64(m.shape.DotsY) / m.shape.VerticalScale()
 	m.center = geo.PointToLatLon(center, m.zoom)
 }
 

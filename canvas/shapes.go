@@ -44,6 +44,11 @@ func brailleGlyph(mask byte) rune {
 // (U+2580-U+259F), giving each terminal cell a 2x2 sub-pixel grid.
 // It has less resolution than Braille but is often visually bolder,
 // and relies on a smaller, very widely supported set of characters.
+//
+// Its 2x2 dot grid is square, but a terminal cell isn't (it's about
+// twice as tall as wide), so each dot renders physically taller than
+// wide; YScale compensates by compressing the map's vertical mapping
+// to match, keeping geographic shapes undistorted.
 var Blocks = Shape{
 	Name:      "blocks",
 	DotsX:     2,
@@ -51,6 +56,7 @@ var Blocks = Shape{
 	Bit:       func(dx, dy int) byte { return blockDotMask[dy][dx] },
 	Glyph:     func(mask byte) rune { return blockGlyphs[mask] },
 	PinMarker: '●',
+	YScale:    0.5,
 }
 
 var blockDotMask = [2][2]byte{
@@ -74,7 +80,9 @@ var blockGlyphs = [16]rune{
 var ASCII = NewASCIIShape('#')
 
 // NewASCIIShape returns a plain-ASCII Shape (1x1 dot resolution) that
-// renders a lit cell using the given rune.
+// renders a lit cell using the given rune. Like Blocks, its dot grid
+// is square while a terminal cell isn't, so YScale is set to 0.5 to
+// keep geographic shapes undistorted.
 func NewASCIIShape(on rune) Shape {
 	return Shape{
 		Name:  "ascii",
@@ -88,5 +96,6 @@ func NewASCIIShape(on rune) Shape {
 			return on
 		},
 		PinMarker: '*',
+		YScale:    0.5,
 	}
 }

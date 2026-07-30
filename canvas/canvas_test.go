@@ -190,3 +190,24 @@ func TestPinMarkerDefaultsAndOverrides(t *testing.T) {
 		t.Errorf("zero-value PinMarker should fall back to ●, got %q", got)
 	}
 }
+
+func TestVerticalScale(t *testing.T) {
+	cases := []struct {
+		name  string
+		shape Shape
+		want  float64
+	}{
+		{"braille (square 2x4 dots, no correction needed)", Braille, 1},
+		{"blocks (square 2x2 dots, needs halving)", Blocks, 0.5},
+		{"ascii (square 1x1 dots, needs halving)", ASCII, 0.5},
+		{"zero-value Shape defaults to 1", Shape{}, 1},
+	}
+	for _, c := range cases {
+		if got := c.shape.VerticalScale(); got != c.want {
+			t.Errorf("%s: VerticalScale() = %v, want %v", c.name, got, c.want)
+		}
+		if got := New(c.shape, 1, 1).YScale(); got != c.want {
+			t.Errorf("%s: Canvas.YScale() = %v, want %v", c.name, got, c.want)
+		}
+	}
+}

@@ -285,3 +285,64 @@ func TestDrawLineWidthThickensRender(t *testing.T) {
 			countGlyphs(thick), countGlyphs(thin))
 	}
 }
+
+// findMarkerRow returns the 0-indexed row of the first cell in frame
+// containing marker, ignoring ANSI escapes.
+func findMarkerRow(t *testing.T, frame string, marker rune) int {
+	t.Helper()
+	for i, line := range strings.Split(frame, "\n") {
+		if strings.ContainsRune(ansiEscape.ReplaceAllString(line, ""), marker) {
+			return i
+		}
+	}
+	t.Fatalf("marker %q not found in rendered frame:\n%s", marker, ansiEscape.ReplaceAllString(frame, ""))
+	return -1
+}
+
+// TestVerticalAspectCorrection checks the fix for shapes (like Blocks
+// and ASCII) whose dot grid is square even though a terminal cell
+// isn't (~1:2 width:height): without correcting for that, geographic
+// content renders vertically stretched. A pin placed at an exact,
+// known north offset from the map center should land half as many
+// dot-rows away under Blocks as under Braille, since Blocks halves
+// the vertical world-to-dot mapping to compensate.
+func TestVerticalAspectCorrection(t *testing.T) {
+	provider := tileprovider.NewMemoryProvider()
+	center := LatLon{Lat: 0, Lon: 0}
+	const zoom = 10.0
+
+	centerPt := geo.LatLonToPoint(center, zoom)
+	const offsetPixels = 80.0
+	north := geo.PointToLatLon(geo.Point{X: centerPt.X, Y: centerPt.Y - offsetPixels}, zoom)
+
+	rowOffsetInDots := func(shape canvas.Shape) int {
+		m, err := New(Options{
+			Provider: provider, Width: 100, Height: 100,
+			Center: center, Zoom: zoom, Shape: shape,
+		})
+		if err != nil {
+			t.Fatalf("New: %v", err)
+		}
+		m.AddPin(north.Lat, north.Lon, "")
+		frame, err := m.Render(context.Background())
+		if err != nil {
+			t.Fatalf("Render: %v", err)
+		}
+		row := findMarkerRow(t, frame, shape.PinMarker)
+		centerRow := m.height / 2
+		return (centerRow - row) * shape.DotsY
+	}
+
+	brailleDots := rowOffsetInDots(canvas.Braille)
+	blocksDots := rowOffsetInDots(canvas.Blocks)
+
+	if brailleDots <= 0 || blocksDots <= 0 {
+		t.Fatalf("expected both shapes to place the pin above center: braille=%d blocks=%d", brailleDots, blocksDots)
+	}
+
+	ratio := float64(blocksDots) / float64(brailleDots)
+	if ratio < 0.4 || ratio > 0.6 {
+		t.Errorf("expected Blocks' dot-row offset to be ~half Braille's for the same geographic offset (YScale=0.5), got ratio %.3f (braille=%d blocks=%d)",
+			ratio, brailleDots, blocksDots)
+	}
+}
