@@ -1,44 +1,40 @@
-// Package braille implements a terminal drawing surface built on top of
-// Unicode Braille Patterns (U+2800-U+28FF). Each terminal character cell
-// holds a 2x4 grid of dots, giving 2x horizontal and 4x vertical
-// resolution compared to plain character-cell drawing. This is the same
-// technique used by drawille and by mapscii's own Canvas.js.
-package braille
+// Package canvas implements a generic terminal drawing surface. Its
+// sub-pixel resolution and glyph set are supplied by a Shape, so the
+// same drawing algorithms (dots, lines, text overlays) can render as
+// Unicode braille, block-mosaic quadrants, plain ASCII, or any other
+// character set a caller defines - see shapes.go for the built-ins.
+package canvas
 
 import (
 	"math"
 	"strings"
 )
 
-// brailleBase is the Unicode code point of the "all dots off" braille
-// pattern; individual dots are turned on by OR-ing a bit mask onto it.
-const brailleBase = 0x2800
-
-// dotMask maps a dot's position within a cell (row 0-3, col 0-1) to the
-// bit that must be set in the braille pattern byte to light it up. This
-// is the standard braille/drawille dot numbering:
-//
-//	0 3
-//	1 4
-//	2 5
-//	6 7
-var dotMask = [4][2]byte{
-	{0x01, 0x08},
-	{0x02, 0x10},
-	{0x04, 0x20},
-	{0x40, 0x80},
-}
-
-// DotsPerCellX and DotsPerCellY describe the sub-pixel resolution of a
-// single terminal character cell.
-const (
-	DotsPerCellX = 2
-	DotsPerCellY = 4
-)
-
 // Color is an RGB truecolor value used to paint canvas cells.
 type Color struct {
 	R, G, B uint8
+}
+
+// Shape defines a terminal cell's sub-pixel dot grid: how many dot
+// columns and rows it holds, which mask bit a given dot position sets,
+// how a mask renders as a single display rune, and which rune marks a
+// pin. DotsX*DotsY must not exceed 8, since a cell's dot mask is a
+// single byte.
+type Shape struct {
+	// Name identifies the shape, e.g. for flag values or logging.
+	Name string
+	// DotsX and DotsY are the sub-pixel resolution of one terminal
+	// cell.
+	DotsX, DotsY int
+	// Bit returns the mask bit lit by the dot at position (dx,dy)
+	// within a cell, where 0<=dx<DotsX and 0<=dy<DotsY. Every
+	// (dx,dy) pair must map to a distinct bit.
+	Bit func(dx, dy int) byte
+	// Glyph renders a cell's dot mask (0 meaning an empty cell) as a
+	// display rune.
+	Glyph func(mask byte) rune
+	// PinMarker is the rune used to mark a pin placed on the map.
+	PinMarker rune
 }
 
 type cell struct {
@@ -49,17 +45,17 @@ type cell struct {
 	hasText  bool
 }
 
-// Canvas is a braille drawing surface addressed in sub-pixel ("dot")
-// coordinates. A canvas created with NewCanvas(cols, rows) exposes a dot
-// grid of cols*DotsPerCellX by rows*DotsPerCellY points.
+// Canvas is a drawing surface addressed in sub-pixel ("dot")
+// coordinates, rendered through the rules of a Shape.
 type Canvas struct {
+	shape      Shape
 	cols, rows int
 	cells      []cell
 }
 
-// NewCanvas creates a canvas sized to fit cols x rows terminal character
-// cells.
-func NewCanvas(cols, rows int) *Canvas {
+// New creates a canvas sized to fit cols x rows terminal character
+// cells, using the given Shape's sub-pixel resolution and glyph set.
+func New(shape Shape, cols, rows int) *Canvas {
 	if cols < 0 {
 		cols = 0
 	}
@@ -67,19 +63,36 @@ func NewCanvas(cols, rows int) *Canvas {
 		rows = 0
 	}
 	return &Canvas{
+		shape: shape,
 		cols:  cols,
 		rows:  rows,
 		cells: make([]cell, cols*rows),
 	}
 }
 
+// Shape returns the Shape this canvas was created with.
+func (c *Canvas) Shape() Shape { return c.shape }
+
 // Cols and Rows report the canvas size in terminal character cells.
 func (c *Canvas) Cols() int { return c.cols }
 func (c *Canvas) Rows() int { return c.rows }
 
 // Width and Height report the canvas size in dot (sub-pixel) coordinates.
-func (c *Canvas) Width() int  { return c.cols * DotsPerCellX }
-func (c *Canvas) Height() int { return c.rows * DotsPerCellY }
+func (c *Canvas) Width() int  { return c.cols * c.shape.DotsX }
+func (c *Canvas) Height() int { return c.rows * c.shape.DotsY }
+
+// DotsPerCellX and DotsPerCellY report the Shape's sub-pixel resolution.
+func (c *Canvas) DotsPerCellX() int { return c.shape.DotsX }
+func (c *Canvas) DotsPerCellY() int { return c.shape.DotsY }
+
+// PinMarker returns the rune this canvas's Shape uses to mark a pin,
+// falling back to "●" if the Shape didn't set one.
+func (c *Canvas) PinMarker() rune {
+	if c.shape.PinMarker == 0 {
+		return '●'
+	}
+	return c.shape.PinMarker
+}
 
 // Clear resets every dot, color and text override on the canvas.
 func (c *Canvas) Clear() {
@@ -113,13 +126,14 @@ func (c *Canvas) Set(x, y int, color Color) {
 	if x < 0 || y < 0 || x >= c.Width() || y >= c.Height() {
 		return
 	}
-	cellX, cellY := x/DotsPerCellX, y/DotsPerCellY
-	dotX, dotY := x%DotsPerCellX, y%DotsPerCellY
+	dotsX, dotsY := c.shape.DotsX, c.shape.DotsY
+	cellX, cellY := x/dotsX, y/dotsY
+	dx, dy := x%dotsX, y%dotsY
 	idx, ok := c.cellIndex(cellX, cellY)
 	if !ok {
 		return
 	}
-	c.cells[idx].mask |= dotMask[dotY][dotX]
+	c.cells[idx].mask |= c.shape.Bit(dx, dy)
 	c.cells[idx].color = color
 	c.cells[idx].hasColor = true
 }
@@ -130,13 +144,14 @@ func (c *Canvas) Unset(x, y int) {
 	if x < 0 || y < 0 || x >= c.Width() || y >= c.Height() {
 		return
 	}
-	cellX, cellY := x/DotsPerCellX, y/DotsPerCellY
-	dotX, dotY := x%DotsPerCellX, y%DotsPerCellY
+	dotsX, dotsY := c.shape.DotsX, c.shape.DotsY
+	cellX, cellY := x/dotsX, y/dotsY
+	dx, dy := x%dotsX, y%dotsY
 	idx, ok := c.cellIndex(cellX, cellY)
 	if !ok {
 		return
 	}
-	c.cells[idx].mask &^= dotMask[dotY][dotX]
+	c.cells[idx].mask &^= c.shape.Bit(dx, dy)
 }
 
 // Line draws a straight line between two sub-pixel coordinates using
@@ -206,8 +221,8 @@ func (c *Canvas) LineWidth(x0, y0, x1, y1 int, width float64, color Color) {
 }
 
 // Text writes a literal string starting at the given cell coordinate,
-// overriding any braille dots at those cells. Text is drawn on top of
-// the dot grid and is not affected by it.
+// overriding any dots at those cells. Text is drawn on top of the dot
+// grid and is not affected by it.
 func (c *Canvas) Text(cellX, cellY int, s string, color Color) {
 	for i, r := range []rune(s) {
 		idx, ok := c.cellIndex(cellX+i, cellY)
@@ -245,7 +260,7 @@ func (c *Canvas) Frame() string {
 			case cl.hasText:
 				r = cl.text
 			case cl.mask != 0:
-				r = rune(brailleBase + int(cl.mask))
+				r = c.shape.Glyph(cl.mask)
 			default:
 				r = ' '
 			}

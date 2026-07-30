@@ -6,7 +6,7 @@ import (
 	"math"
 	"sort"
 
-	"github.com/audergonv/go-mapscii/braille"
+	"github.com/audergonv/go-mapscii/canvas"
 	"github.com/audergonv/go-mapscii/geo"
 	"github.com/audergonv/go-mapscii/style"
 	"github.com/audergonv/go-mapscii/tileprovider"
@@ -14,7 +14,7 @@ import (
 )
 
 // dotPt is a coordinate in canvas dot (sub-pixel) space; unlike
-// braille.Canvas's own integer dot coordinates, these stay in floating
+// canvas.Canvas's own integer dot coordinates, these stay in floating
 // point until the moment they are drawn, so geometry can be positioned
 // precisely before rounding.
 type dotPt struct {
@@ -32,15 +32,15 @@ const (
 type drawCmd struct {
 	priority int
 	kind     geomKind
-	color    braille.Color
+	color    canvas.Color
 	width    float64
 	parts    [][]dotPt
 }
 
 // Render draws the current viewport - base map plus any pins and lines
-// - and returns it as a string of terminal rows containing Unicode
-// braille characters and 24-bit ANSI color escapes, ready to be printed
-// directly to a terminal.
+// - and returns it as a string of terminal rows containing the
+// configured Shape's characters and 24-bit ANSI color escapes, ready
+// to be printed directly to a terminal.
 func (m *Map) Render(ctx context.Context) (string, error) {
 	m.mu.RLock()
 	center := m.center
@@ -48,12 +48,13 @@ func (m *Map) Render(ctx context.Context) (string, error) {
 	width, height := m.width, m.height
 	provider := m.provider
 	sty := m.style
+	shape := m.shape
 	maxTileZoom := m.maxTileZoom
 	pins := append([]*Pin(nil), m.pins...)
 	lines := append([]*Line(nil), m.lines...)
 	m.mu.RUnlock()
 
-	canvas := braille.NewCanvas(width, height)
+	cv := canvas.New(shape, width, height)
 
 	tileZoom := int(math.Floor(zoom))
 	if tileZoom > maxTileZoom {
@@ -65,10 +66,10 @@ func (m *Map) Render(ctx context.Context) (string, error) {
 	scale := math.Pow(2, zoom-float64(tileZoom))
 
 	centerPoint := geo.LatLonToPoint(center, zoom)
-	originX := centerPoint.X - float64(canvas.Width())/2
-	originY := centerPoint.Y - float64(canvas.Height())/2
+	originX := centerPoint.X - float64(cv.Width())/2
+	originY := centerPoint.Y - float64(cv.Height())/2
 
-	cmds, err := collectTileDrawCommands(ctx, provider, sty, tileZoom, scale, originX, originY, canvas)
+	cmds, err := collectTileDrawCommands(ctx, provider, sty, tileZoom, scale, originX, originY, cv)
 	if err != nil {
 		return "", err
 	}
@@ -77,15 +78,15 @@ func (m *Map) Render(ctx context.Context) (string, error) {
 		return cmds[i].priority < cmds[j].priority
 	})
 
-	w, h := float64(canvas.Width()-1), float64(canvas.Height()-1)
+	w, h := float64(cv.Width()-1), float64(cv.Height()-1)
 	for _, cmd := range cmds {
-		drawCommand(canvas, cmd, w, h)
+		drawCommand(cv, cmd, w, h)
 	}
 
-	drawOverlayLines(canvas, lines, sty, zoom, originX, originY, w, h)
-	drawOverlayPins(canvas, pins, sty, zoom, originX, originY)
+	drawOverlayLines(cv, lines, sty, zoom, originX, originY, w, h)
+	drawOverlayPins(cv, pins, sty, zoom, originX, originY)
 
-	return canvas.Frame(), nil
+	return cv.Frame(), nil
 }
 
 // collectTileDrawCommands fetches every tile intersecting the viewport
@@ -99,12 +100,12 @@ func collectTileDrawCommands(
 	sty *style.Style,
 	tileZoom int,
 	scale, originX, originY float64,
-	canvas *braille.Canvas,
+	cv *canvas.Canvas,
 ) ([]drawCmd, error) {
 	worldOriginX := originX / scale
 	worldOriginY := originY / scale
-	worldW := float64(canvas.Width()) / scale
-	worldH := float64(canvas.Height()) / scale
+	worldW := float64(cv.Width()) / scale
+	worldH := float64(cv.Height()) / scale
 
 	n := geo.TileCount(tileZoom)
 	minTileX := clampInt(int(math.Floor(worldOriginX/geo.TileSize)), 0, n-1)
@@ -201,26 +202,26 @@ func roadClass(f vectortile.Feature) string {
 	return ""
 }
 
-func drawCommand(canvas *braille.Canvas, cmd drawCmd, maxX, maxY float64) {
+func drawCommand(cv *canvas.Canvas, cmd drawCmd, maxX, maxY float64) {
 	switch cmd.kind {
 	case kindPolygon:
-		fillPolygon(canvas, cmd.parts, cmd.color)
+		fillPolygon(cv, cmd.parts, cmd.color)
 	case kindLine:
 		for _, part := range cmd.parts {
 			for i := 0; i+1 < len(part); i++ {
-				drawClippedLine(canvas, part[i], part[i+1], cmd.color, cmd.width, maxX, maxY)
+				drawClippedLine(cv, part[i], part[i+1], cmd.color, cmd.width, maxX, maxY)
 			}
 		}
 	case kindPoint:
 		for _, part := range cmd.parts {
 			for _, p := range part {
-				canvas.Set(int(math.Round(p.X)), int(math.Round(p.Y)), cmd.color)
+				cv.Set(int(math.Round(p.X)), int(math.Round(p.Y)), cmd.color)
 			}
 		}
 	}
 }
 
-func drawOverlayLines(canvas *braille.Canvas, lines []*Line, sty *style.Style, zoom, originX, originY, maxX, maxY float64) {
+func drawOverlayLines(cv *canvas.Canvas, lines []*Line, sty *style.Style, zoom, originX, originY, maxX, maxY float64) {
 	for _, line := range lines {
 		color := sty.DefaultLineColor
 		if line.hasColor {
@@ -236,14 +237,14 @@ func drawOverlayLines(canvas *braille.Canvas, lines []*Line, sty *style.Style, z
 			p := geo.LatLonToPoint(ll, zoom)
 			cur := dotPt{X: p.X - originX, Y: p.Y - originY}
 			if has {
-				drawClippedLine(canvas, prev, cur, color, width, maxX, maxY)
+				drawClippedLine(cv, prev, cur, color, width, maxX, maxY)
 			}
 			prev, has = cur, true
 		}
 	}
 }
 
-func drawOverlayPins(canvas *braille.Canvas, pins []*Pin, sty *style.Style, zoom, originX, originY float64) {
+func drawOverlayPins(cv *canvas.Canvas, pins []*Pin, sty *style.Style, zoom, originX, originY float64) {
 	for _, pin := range pins {
 		markerColor := sty.PinColor
 		if pin.hasColor {
@@ -251,12 +252,12 @@ func drawOverlayPins(canvas *braille.Canvas, pins []*Pin, sty *style.Style, zoom
 		}
 		p := geo.LatLonToPoint(pin.Pos, zoom)
 		dotX, dotY := p.X-originX, p.Y-originY
-		cellX := int(math.Round(dotX)) / braille.DotsPerCellX
-		cellY := int(math.Round(dotY)) / braille.DotsPerCellY
+		cellX := int(math.Round(dotX)) / cv.DotsPerCellX()
+		cellY := int(math.Round(dotY)) / cv.DotsPerCellY()
 
-		canvas.Text(cellX, cellY, "●", markerColor) // ●
+		cv.Text(cellX, cellY, string(cv.PinMarker()), markerColor)
 		if pin.Label != "" {
-			canvas.Text(cellX+1, cellY, " "+pin.Label, sty.PinLabelColor)
+			cv.Text(cellX+1, cellY, " "+pin.Label, sty.PinLabelColor)
 		}
 	}
 }
@@ -265,12 +266,12 @@ func drawOverlayPins(canvas *braille.Canvas, pins []*Pin, sty *style.Style, zoom
 // it to the canvas's Bresenham line drawer, so that segments which
 // mostly lie far outside the viewport don't cost time proportional to
 // their (potentially huge) off-screen length.
-func drawClippedLine(canvas *braille.Canvas, a, b dotPt, color braille.Color, width, maxX, maxY float64) {
+func drawClippedLine(cv *canvas.Canvas, a, b dotPt, color canvas.Color, width, maxX, maxY float64) {
 	x0, y0, x1, y1, ok := clipSegment(a.X, a.Y, b.X, b.Y, 0, 0, maxX, maxY)
 	if !ok {
 		return
 	}
-	canvas.LineWidth(int(math.Round(x0)), int(math.Round(y0)), int(math.Round(x1)), int(math.Round(y1)), width, color)
+	cv.LineWidth(int(math.Round(x0)), int(math.Round(y0)), int(math.Round(x1)), int(math.Round(y1)), width, color)
 }
 
 // clipSegment implements Cohen-Sutherland line clipping against the
@@ -343,7 +344,7 @@ func clipSegment(x0, y0, x1, y1, minX, minY, maxX, maxY float64) (cx0, cy0, cx1,
 // fillPolygon fills the given rings using an even-odd scanline rule at
 // full canvas dot resolution, so it also correctly leaves holes (e.g.
 // a lake's interior ring within a landuse polygon) unfilled.
-func fillPolygon(canvas *braille.Canvas, rings [][]dotPt, color braille.Color) {
+func fillPolygon(cv *canvas.Canvas, rings [][]dotPt, color canvas.Color) {
 	if len(rings) == 0 {
 		return
 	}
@@ -363,8 +364,8 @@ func fillPolygon(canvas *braille.Canvas, rings [][]dotPt, color braille.Color) {
 		return
 	}
 
-	startY := clampInt(int(math.Floor(minY)), 0, canvas.Height()-1)
-	endY := clampInt(int(math.Ceil(maxY)), 0, canvas.Height()-1)
+	startY := clampInt(int(math.Floor(minY)), 0, cv.Height()-1)
+	endY := clampInt(int(math.Ceil(maxY)), 0, cv.Height()-1)
 
 	var xs []float64
 	for y := startY; y <= endY; y++ {
@@ -386,10 +387,10 @@ func fillPolygon(canvas *braille.Canvas, rings [][]dotPt, color braille.Color) {
 		}
 		sort.Float64s(xs)
 		for i := 0; i+1 < len(xs); i += 2 {
-			x0 := clampInt(int(math.Round(xs[i])), 0, canvas.Width()-1)
-			x1 := clampInt(int(math.Round(xs[i+1])), 0, canvas.Width()-1)
+			x0 := clampInt(int(math.Round(xs[i])), 0, cv.Width()-1)
+			x1 := clampInt(int(math.Round(xs[i+1])), 0, cv.Width()-1)
 			for x := x0; x <= x1; x++ {
-				canvas.Set(x, y, color)
+				cv.Set(x, y, color)
 			}
 		}
 	}

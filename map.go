@@ -1,8 +1,9 @@
-// Package mapscii renders vector-tile maps in the terminal, using
-// Unicode braille characters for sub-cell resolution. It is a pure Go
-// library inspired by github.com/rastapasta/mapscii: point it at a
-// Mapbox Vector Tile source, then pan, zoom, add pins and draw lines
-// over a live-rendered map.
+// Package mapscii renders vector-tile maps in the terminal, using a
+// configurable character set (Unicode braille by default) for
+// sub-cell resolution. It is a pure Go library inspired by
+// github.com/rastapasta/mapscii: point it at a Mapbox Vector Tile
+// source, then pan, zoom, add pins and draw lines over a live-rendered
+// map.
 package mapscii
 
 import (
@@ -10,7 +11,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/audergonv/go-mapscii/braille"
+	"github.com/audergonv/go-mapscii/canvas"
 	"github.com/audergonv/go-mapscii/geo"
 	"github.com/audergonv/go-mapscii/style"
 	"github.com/audergonv/go-mapscii/tileprovider"
@@ -56,6 +57,14 @@ type Options struct {
 	// Style controls the color used for each vector tile layer.
 	// Defaults to style.Default().
 	Style *style.Style
+
+	// Shape controls the rendering technique: how many sub-pixel dots
+	// fit in one terminal cell and which characters represent them.
+	// Defaults to canvas.Braille (highest resolution). canvas.Blocks
+	// trades resolution for bolder, more widely supported block
+	// characters, and canvas.ASCII (or canvas.NewASCIIShape) uses
+	// plain ASCII only. Any custom canvas.Shape works too.
+	Shape canvas.Shape
 }
 
 // Map is a renderable, pannable, zoomable vector-tile map with support
@@ -65,6 +74,7 @@ type Map struct {
 
 	provider    tileprovider.Provider
 	style       *style.Style
+	shape       canvas.Shape
 	width       int
 	height      int
 	center      LatLon
@@ -87,6 +97,7 @@ func New(opts Options) (*Map, error) {
 	m := &Map{
 		provider:    opts.Provider,
 		style:       opts.Style,
+		shape:       opts.Shape,
 		width:       opts.Width,
 		height:      opts.Height,
 		center:      opts.Center,
@@ -98,6 +109,9 @@ func New(opts Options) (*Map, error) {
 
 	if m.style == nil {
 		m.style = style.Default()
+	}
+	if m.shape.DotsX == 0 || m.shape.DotsY == 0 {
+		m.shape = canvas.Braille
 	}
 	if m.width <= 0 {
 		m.width = 80
@@ -143,8 +157,8 @@ func (m *Map) Pan(dxCells, dyCells float64) {
 		return
 	}
 	center := geo.LatLonToPoint(m.center, m.zoom)
-	center.X += dxCells * braille.DotsPerCellX
-	center.Y += dyCells * braille.DotsPerCellY
+	center.X += dxCells * float64(m.shape.DotsX)
+	center.Y += dyCells * float64(m.shape.DotsY)
 	m.center = geo.PointToLatLon(center, m.zoom)
 }
 
@@ -186,6 +200,24 @@ func (m *Map) Size() (width, height int) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.width, m.height
+}
+
+// Shape returns the render Shape currently in use.
+func (m *Map) Shape() canvas.Shape {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.shape
+}
+
+// SetShape switches the rendering technique (see Options.Shape). It
+// takes effect on the next call to Render.
+func (m *Map) SetShape(shape canvas.Shape) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if shape.DotsX == 0 || shape.DotsY == 0 {
+		shape = canvas.Braille
+	}
+	m.shape = shape
 }
 
 func clamp(v, lo, hi float64) float64 {

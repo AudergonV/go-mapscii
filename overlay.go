@@ -1,13 +1,13 @@
 package mapscii
 
-import "github.com/audergonv/go-mapscii/braille"
+import "github.com/audergonv/go-mapscii/canvas"
 
 // Pin marks a labeled point on the map.
 type Pin struct {
 	id       int
 	Pos      LatLon
 	Label    string
-	Color    braille.Color
+	Color    canvas.Color
 	hasColor bool
 }
 
@@ -15,7 +15,7 @@ type Pin struct {
 type Line struct {
 	id       int
 	Points   []LatLon
-	Color    braille.Color
+	Color    canvas.Color
 	hasColor bool
 	Width    float64
 	hasWidth bool
@@ -26,7 +26,7 @@ type LineOption func(*Line)
 
 // WithLineColor sets a custom color for a drawn line, overriding the
 // style's DefaultLineColor.
-func WithLineColor(c braille.Color) LineOption {
+func WithLineColor(c canvas.Color) LineOption {
 	return func(l *Line) {
 		l.Color = c
 		l.hasColor = true
@@ -49,7 +49,7 @@ type PinOption func(*Pin)
 
 // WithPinColor sets a custom color for a pin, overriding the style's
 // PinColor.
-func WithPinColor(c braille.Color) PinOption {
+func WithPinColor(c canvas.Color) PinOption {
 	return func(p *Pin) {
 		p.Color = c
 		p.hasColor = true

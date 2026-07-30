@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/audergonv/go-mapscii/canvas"
 	"github.com/audergonv/go-mapscii/geo"
 	"github.com/audergonv/go-mapscii/tileprovider"
 	"github.com/audergonv/go-mapscii/vectortile"
@@ -91,6 +92,52 @@ func TestNewAppliesDefaults(t *testing.T) {
 	}
 	if m.Zoom() != DefaultZoom {
 		t.Errorf("Zoom() = %v, want %v", m.Zoom(), DefaultZoom)
+	}
+	if m.Shape().Name != canvas.Braille.Name {
+		t.Errorf("Shape() = %v, want braille (the default)", m.Shape().Name)
+	}
+}
+
+func TestNewHonorsCustomShape(t *testing.T) {
+	m, err := New(Options{Provider: tileprovider.NewMemoryProvider(), Shape: canvas.ASCII})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if m.Shape().Name != canvas.ASCII.Name {
+		t.Errorf("Shape() = %v, want ascii", m.Shape().Name)
+	}
+}
+
+func TestSetShapeChangesRenderOutput(t *testing.T) {
+	m, _ := newTestMap(t, LatLon{Lat: 48.8566, Lon: 2.3522}, 10)
+
+	brailleFrame, err := m.Render(context.Background())
+	if err != nil {
+		t.Fatalf("Render (braille): %v", err)
+	}
+
+	m.SetShape(canvas.ASCII)
+	if m.Shape().Name != canvas.ASCII.Name {
+		t.Fatalf("Shape() after SetShape = %v, want ascii", m.Shape().Name)
+	}
+	asciiFrame, err := m.Render(context.Background())
+	if err != nil {
+		t.Fatalf("Render (ascii): %v", err)
+	}
+
+	if brailleFrame == asciiFrame {
+		t.Error("expected switching Shape to change the rendered output")
+	}
+	if strings.ContainsRune(asciiFrame, '⣿') {
+		t.Error("expected ascii-shaped render to contain no braille glyphs")
+	}
+}
+
+func TestSetShapeRejectsZeroValue(t *testing.T) {
+	m, _ := newTestMap(t, LatLon{}, 5)
+	m.SetShape(canvas.Shape{})
+	if m.Shape().Name != canvas.Braille.Name {
+		t.Errorf("SetShape(zero value) should fall back to braille, got %v", m.Shape().Name)
 	}
 }
 

@@ -8,8 +8,9 @@
 //
 //	mapscii-demo -tile-url "https://example.com/tiles/{z}/{x}/{y}.pbf"
 //
-// Controls: arrow keys pan, +/- zoom, r re-centers on the start
-// location, q or Ctrl-C quits.
+// Controls: arrow keys pan, +/- zoom, s cycles the render shape
+// (braille/blocks/ascii), r re-centers on the start location, q or
+// Ctrl-C quits.
 package main
 
 import (
@@ -24,9 +25,26 @@ import (
 	"syscall"
 
 	mapscii "github.com/audergonv/go-mapscii"
+	"github.com/audergonv/go-mapscii/canvas"
 	"github.com/audergonv/go-mapscii/tileprovider"
 	"golang.org/x/term"
 )
+
+// shapeCycle lists the render shapes -s cycles through, in order.
+var shapeCycle = []canvas.Shape{canvas.Braille, canvas.Blocks, canvas.ASCII}
+
+func parseShape(name string) (canvas.Shape, error) {
+	switch strings.ToLower(name) {
+	case "braille":
+		return canvas.Braille, nil
+	case "blocks", "block":
+		return canvas.Blocks, nil
+	case "ascii":
+		return canvas.ASCII, nil
+	default:
+		return canvas.Shape{}, fmt.Errorf("unknown shape %q (want braille, blocks or ascii)", name)
+	}
+}
 
 type headerFlags map[string]string
 
@@ -70,6 +88,7 @@ func main() {
 	lat := flag.Float64("lat", 48.8566, "initial center latitude")
 	lon := flag.Float64("lon", 2.3522, "initial center longitude")
 	zoom := flag.Float64("zoom", 12, "initial zoom level")
+	shapeName := flag.String("shape", "braille", "render shape: braille, blocks, or ascii")
 	headers := make(headerFlags)
 	flag.Var(headers, "header", `extra HTTP header sent with tile requests, as "Key: Value" (repeatable)`)
 	var pins pinFlags
@@ -79,6 +98,11 @@ func main() {
 	if *tileURL == "" {
 		fmt.Fprintln(os.Stderr, "mapscii-demo: -tile-url is required")
 		flag.Usage()
+		os.Exit(2)
+	}
+	shape, err := parseShape(*shapeName)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "mapscii-demo:", err)
 		os.Exit(2)
 	}
 
@@ -100,6 +124,7 @@ func main() {
 		Height:   height,
 		Center:   mapscii.LatLon{Lat: *lat, Lon: *lon},
 		Zoom:     *zoom,
+		Shape:    shape,
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "mapscii-demo:", err)
@@ -149,8 +174,20 @@ func runInteractive(m *mapscii.Map, startLat, startLon, startZoom float64) error
 		}
 	}()
 
+	shapeIdx := 0
+	for i, s := range shapeCycle {
+		if s.Name == m.Shape().Name {
+			shapeIdx = i
+			break
+		}
+	}
+	cycleShape := func() {
+		shapeIdx = (shapeIdx + 1) % len(shapeCycle)
+		m.SetShape(shapeCycle[shapeIdx])
+	}
+
 	quit := make(chan struct{})
-	go readKeys(os.Stdin, m, startLat, startLon, startZoom, trigger, quit)
+	go readKeys(os.Stdin, m, startLat, startLon, startZoom, trigger, cycleShape, quit)
 
 	ctx := context.Background()
 	for {
@@ -170,8 +207,8 @@ func runInteractive(m *mapscii.Map, startLat, startLon, startZoom float64) error
 				b.WriteString("\x1b[K\r\n")
 			}
 			c := m.Center()
-			fmt.Fprintf(&b, "\x1b[7m %dx%d  %.5f,%.5f  z%.2f  arrows=pan +/-=zoom r=reset q=quit \x1b[0m\x1b[K",
-				w, h, c.Lat, c.Lon, m.Zoom())
+			fmt.Fprintf(&b, "\x1b[7m %dx%d  %.5f,%.5f  z%.2f  %s  arrows=pan +/-=zoom s=shape r=reset q=quit \x1b[0m\x1b[K",
+				w, h, c.Lat, c.Lon, m.Zoom(), m.Shape().Name)
 			fmt.Fprint(out, b.String())
 		}
 	}
@@ -180,7 +217,7 @@ func runInteractive(m *mapscii.Map, startLat, startLon, startZoom float64) error
 // readKeys reads raw terminal input, translating arrow keys and a
 // handful of single-character commands into map operations. It runs
 // until stdin is closed or a quit command is read.
-func readKeys(in *os.File, m *mapscii.Map, startLat, startLon, startZoom float64, trigger func(), quit chan<- struct{}) {
+func readKeys(in *os.File, m *mapscii.Map, startLat, startLon, startZoom float64, trigger, cycleShape func(), quit chan<- struct{}) {
 	r := bufio.NewReader(in)
 	panStep := 6.0
 	for {
@@ -198,6 +235,9 @@ func readKeys(in *os.File, m *mapscii.Map, startLat, startLon, startZoom float64
 			trigger()
 		case '-', '_':
 			m.ZoomBy(-0.5)
+			trigger()
+		case 's':
+			cycleShape()
 			trigger()
 		case 'r':
 			m.SetCenter(startLat, startLon)

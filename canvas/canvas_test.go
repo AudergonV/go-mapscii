@@ -1,16 +1,19 @@
-package braille
+package canvas
 
 import "testing"
 
 func TestNewCanvasDimensions(t *testing.T) {
-	c := NewCanvas(10, 5)
+	c := New(Braille, 10, 5)
 	if c.Width() != 20 || c.Height() != 20 {
 		t.Errorf("Width/Height = %d/%d, want 20/20", c.Width(), c.Height())
 	}
+	if c.DotsPerCellX() != 2 || c.DotsPerCellY() != 4 {
+		t.Errorf("DotsPerCellX/Y = %d/%d, want 2/4", c.DotsPerCellX(), c.DotsPerCellY())
+	}
 }
 
-func TestSetSingleDot(t *testing.T) {
-	c := NewCanvas(1, 1)
+func TestSetSingleDotBraille(t *testing.T) {
+	c := New(Braille, 1, 1)
 	c.Set(0, 0, Color{R: 255})
 	frame := c.Frame()
 	want := "\x1b[38;2;255;0;0m" + string(rune(brailleBase+0x01)) + resetSeq
@@ -19,20 +22,23 @@ func TestSetSingleDot(t *testing.T) {
 	}
 }
 
-func TestAllDotsFillCell(t *testing.T) {
-	c := NewCanvas(1, 1)
-	for y := 0; y < DotsPerCellY; y++ {
-		for x := 0; x < DotsPerCellX; x++ {
+func TestAllDotsFillCellBraille(t *testing.T) {
+	c := New(Braille, 1, 1)
+	for y := 0; y < Braille.DotsY; y++ {
+		for x := 0; x < Braille.DotsX; x++ {
 			c.Set(x, y, Color{R: 1, G: 2, B: 3})
 		}
 	}
 	if c.cells[0].mask != 0xFF {
 		t.Errorf("mask = %#x, want 0xFF", c.cells[0].mask)
 	}
+	if c.shape.Glyph(c.cells[0].mask) != '⣿' {
+		t.Errorf("glyph = %q, want full braille block", c.shape.Glyph(c.cells[0].mask))
+	}
 }
 
 func TestOutOfBoundsIgnored(t *testing.T) {
-	c := NewCanvas(2, 2)
+	c := New(Braille, 2, 2)
 	c.Set(-1, 0, Color{})
 	c.Set(0, -1, Color{})
 	c.Set(100, 100, Color{})
@@ -44,7 +50,7 @@ func TestOutOfBoundsIgnored(t *testing.T) {
 }
 
 func TestClearResetsCanvas(t *testing.T) {
-	c := NewCanvas(2, 2)
+	c := New(Braille, 2, 2)
 	c.Set(0, 0, Color{R: 9})
 	c.Clear()
 	for _, cl := range c.cells {
@@ -55,7 +61,7 @@ func TestClearResetsCanvas(t *testing.T) {
 }
 
 func TestLineDrawsEndpoints(t *testing.T) {
-	c := NewCanvas(4, 4)
+	c := New(Braille, 4, 4)
 	c.Line(0, 0, c.Width()-1, c.Height()-1, Color{R: 1})
 	idxStart := 0
 	idxEnd := len(c.cells) - 1
@@ -78,10 +84,10 @@ func countLitDots(c *Canvas) int {
 }
 
 func TestLineWidthAtMostOneMatchesLine(t *testing.T) {
-	a := NewCanvas(6, 6)
+	a := New(Braille, 6, 6)
 	a.Line(0, 0, a.Width()-1, a.Height()-1, Color{R: 1})
 
-	b := NewCanvas(6, 6)
+	b := New(Braille, 6, 6)
 	b.LineWidth(0, 0, b.Width()-1, b.Height()-1, 1, Color{R: 1})
 
 	if countLitDots(a) != countLitDots(b) {
@@ -90,10 +96,10 @@ func TestLineWidthAtMostOneMatchesLine(t *testing.T) {
 }
 
 func TestLineWidthThickerCoversMoreDots(t *testing.T) {
-	thin := NewCanvas(10, 10)
+	thin := New(Braille, 10, 10)
 	thin.Line(0, thin.Height()/2, thin.Width()-1, thin.Height()/2, Color{R: 1})
 
-	thick := NewCanvas(10, 10)
+	thick := New(Braille, 10, 10)
 	thick.LineWidth(0, thick.Height()/2, thick.Width()-1, thick.Height()/2, 4, Color{R: 1})
 
 	if countLitDots(thick) <= countLitDots(thin) {
@@ -102,7 +108,7 @@ func TestLineWidthThickerCoversMoreDots(t *testing.T) {
 }
 
 func TestTextOverridesDots(t *testing.T) {
-	c := NewCanvas(5, 1)
+	c := New(Braille, 5, 1)
 	c.Set(0, 0, Color{R: 1})
 	c.Text(0, 0, "hi", Color{G: 1})
 	frame := c.Frame()
@@ -115,7 +121,7 @@ func TestTextOverridesDots(t *testing.T) {
 }
 
 func TestResize(t *testing.T) {
-	c := NewCanvas(2, 2)
+	c := New(Braille, 2, 2)
 	c.Set(0, 0, Color{R: 1})
 	c.Resize(3, 3)
 	if c.Cols() != 3 || c.Rows() != 3 {
@@ -125,5 +131,62 @@ func TestResize(t *testing.T) {
 		if cl.mask != 0 {
 			t.Fatal("expected resize to clear contents")
 		}
+	}
+}
+
+func TestBlocksShapeResolutionAndGlyphs(t *testing.T) {
+	c := New(Blocks, 1, 1)
+	if c.Width() != 2 || c.Height() != 2 {
+		t.Fatalf("Width/Height = %d/%d, want 2/2", c.Width(), c.Height())
+	}
+	c.Set(0, 0, Color{R: 1}) // top-left
+	c.Set(1, 1, Color{R: 1}) // bottom-right
+	got := c.shape.Glyph(c.cells[0].mask)
+	if got != '▚' {
+		t.Errorf("glyph for top-left+bottom-right = %q, want ▚", got)
+	}
+
+	full := New(Blocks, 1, 1)
+	for y := 0; y < 2; y++ {
+		for x := 0; x < 2; x++ {
+			full.Set(x, y, Color{R: 1})
+		}
+	}
+	if g := full.shape.Glyph(full.cells[0].mask); g != '█' {
+		t.Errorf("glyph for fully-lit block cell = %q, want █", g)
+	}
+}
+
+func TestASCIIShapeUsesConfiguredChar(t *testing.T) {
+	c := New(NewASCIIShape('*'), 1, 1)
+	if c.Width() != 1 || c.Height() != 1 {
+		t.Fatalf("Width/Height = %d/%d, want 1/1", c.Width(), c.Height())
+	}
+	c.Set(0, 0, Color{R: 1})
+	frame := c.Frame()
+	if want := "\x1b[38;2;1;0;0m*" + resetSeq; frame != want {
+		t.Errorf("Frame() = %q, want %q", frame, want)
+	}
+}
+
+func TestASCIIDefaultShapeUsesHash(t *testing.T) {
+	c := New(ASCII, 1, 1)
+	c.Set(0, 0, Color{R: 1})
+	frame := c.Frame()
+	if want := "\x1b[38;2;1;0;0m#" + resetSeq; frame != want {
+		t.Errorf("Frame() = %q, want %q", frame, want)
+	}
+}
+
+func TestPinMarkerDefaultsAndOverrides(t *testing.T) {
+	if got := New(Braille, 1, 1).PinMarker(); got != '●' {
+		t.Errorf("Braille PinMarker = %q, want ●", got)
+	}
+	if got := New(ASCII, 1, 1).PinMarker(); got != '*' {
+		t.Errorf("ASCII PinMarker = %q, want *", got)
+	}
+	custom := Shape{Name: "custom", DotsX: 1, DotsY: 1, Bit: func(int, int) byte { return 1 }, Glyph: func(byte) rune { return '.' }}
+	if got := New(custom, 1, 1).PinMarker(); got != '●' {
+		t.Errorf("zero-value PinMarker should fall back to ●, got %q", got)
 	}
 }
