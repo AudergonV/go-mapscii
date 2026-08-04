@@ -171,6 +171,16 @@ per line via `mapscii.WithLineWidth(dots)`, overriding
 approximated by stacking parallel 1-dot lines - there's no
 anti-aliasing, but it reads well at terminal resolutions.
 
+`Map.DrawLine` always renders on a dedicated overlay plane, strictly on
+top of the base map: any cell an overlay line touches shows only the
+line's own dots and color, never a blend with whatever base-map
+feature (water, a road, ...) was drawn there first. Without this, a
+cell already lit by the base map plus a couple of overlay dots would
+merge into one glyph colored by whichever was drawn last, making it
+impossible to tell where your line actually is. Pins (`Map.AddPin`)
+already behaved this way and still do; only the base map itself blends
+its own dots together (e.g. two crossing roads sharing a cell).
+
 ## Interactive demo
 
 `cmd/mapscii-demo` is a small terminal app built on the library:

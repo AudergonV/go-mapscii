@@ -346,3 +346,64 @@ func TestVerticalAspectCorrection(t *testing.T) {
 			ratio, brailleDots, blocksDots)
 	}
 }
+
+// TestDrawLineOverlaysBaseMap covers the fix where an overlay line
+// crossing a fully-lit base feature (e.g. a water polygon) used to
+// just recolor the base glyph's existing dots rather than draw as its
+// own shape on top - on Braille that produced a blended glyph you
+// couldn't read as "a line was drawn here".
+func TestDrawLineOverlaysBaseMap(t *testing.T) {
+	provider := tileprovider.NewMemoryProvider()
+	tile := &vectortile.Tile{Layers: []vectortile.Layer{
+		{Name: "water", Extent: 4096, Features: []vectortile.Feature{
+			{Type: vectortile.GeomPolygon, Geometry: [][]vectortile.Point{
+				{{X: 0, Y: 0}, {X: 4096, Y: 0}, {X: 4096, Y: 4096}, {X: 0, Y: 4096}, {X: 0, Y: 0}},
+			}},
+		}},
+	}}
+	center := LatLon{Lat: 48.8566, Lon: 2.3522}
+	const tileZoom = 10
+	ct := geo.TileAt(center, tileZoom)
+	for dy := -1; dy <= 1; dy++ {
+		for dx := -1; dx <= 1; dx++ {
+			provider.Set(geo.TileIndex{Z: tileZoom, X: ct.X + dx, Y: ct.Y + dy}, tile)
+		}
+	}
+
+	m, err := New(Options{Provider: provider, Width: 40, Height: 12, Center: center, Zoom: 10})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	baseline, err := m.Render(context.Background())
+	if err != nil {
+		t.Fatalf("Render (baseline): %v", err)
+	}
+
+	m.DrawLine([]LatLon{{Lat: 48.86, Lon: 2.34}, {Lat: 48.85, Lon: 2.365}},
+		WithLineColor(canvas.Color{R: 255, G: 0, B: 0}), WithLineWidth(2))
+	withLine, err := m.Render(context.Background())
+	if err != nil {
+		t.Fatalf("Render (with line): %v", err)
+	}
+
+	strippedBefore := []rune(ansiEscape.ReplaceAllString(baseline, ""))
+	strippedAfter := []rune(ansiEscape.ReplaceAllString(withLine, ""))
+	if len(strippedBefore) != len(strippedAfter) {
+		t.Fatalf("frame length changed: before=%d after=%d", len(strippedBefore), len(strippedAfter))
+	}
+
+	const fullWaterGlyph = '⣿'
+	changed := 0
+	for i := range strippedBefore {
+		if strippedBefore[i] == strippedAfter[i] {
+			continue
+		}
+		changed++
+		if strippedAfter[i] == fullWaterGlyph {
+			t.Errorf("cell %d still shows the fully-lit water glyph after a line crossed it; overlay should replace the base glyph, not blend into it", i)
+		}
+	}
+	if changed == 0 {
+		t.Fatal("expected at least one glyph to change where the overlay line crosses the water")
+	}
+}

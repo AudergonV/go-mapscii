@@ -240,7 +240,7 @@ func drawOverlayLines(cv *canvas.Canvas, lines []*Line, sty *style.Style, zoom, 
 			p := geo.LatLonToPoint(ll, zoom)
 			cur := dotPt{X: p.X - originX, Y: p.Y*yScale - originY}
 			if has {
-				drawClippedLine(cv, prev, cur, color, width, maxX, maxY)
+				drawClippedOverlayLine(cv, prev, cur, color, width, maxX, maxY)
 			}
 			prev, has = cur, true
 		}
@@ -266,16 +266,30 @@ func drawOverlayPins(cv *canvas.Canvas, pins []*Pin, sty *style.Style, zoom, ori
 	}
 }
 
-// drawClippedLine clips a segment to the canvas bounds before handing
-// it to the canvas's Bresenham line drawer, so that segments which
-// mostly lie far outside the viewport don't cost time proportional to
-// their (potentially huge) off-screen length.
+// drawClippedLine draws a base-plane line (part of the map itself,
+// e.g. a tile-rendered road), clipped to the canvas bounds first.
 func drawClippedLine(cv *canvas.Canvas, a, b dotPt, color canvas.Color, width, maxX, maxY float64) {
+	clippedLine(cv.LineWidth, a, b, color, width, maxX, maxY)
+}
+
+// drawClippedOverlayLine draws a Map.DrawLine overlay line on the
+// canvas's overlay plane, so it renders strictly on top of the base
+// map instead of blending into whatever base-plane dots share its
+// cells - see canvas.Canvas.SetOverlay.
+func drawClippedOverlayLine(cv *canvas.Canvas, a, b dotPt, color canvas.Color, width, maxX, maxY float64) {
+	clippedLine(cv.LineWidthOverlay, a, b, color, width, maxX, maxY)
+}
+
+// clippedLine clips a segment to the canvas bounds before handing it
+// to draw, so that segments which mostly lie far outside the viewport
+// don't cost time proportional to their (potentially huge) off-screen
+// length.
+func clippedLine(draw func(x0, y0, x1, y1 int, width float64, color canvas.Color), a, b dotPt, color canvas.Color, width, maxX, maxY float64) {
 	x0, y0, x1, y1, ok := clipSegment(a.X, a.Y, b.X, b.Y, 0, 0, maxX, maxY)
 	if !ok {
 		return
 	}
-	cv.LineWidth(int(math.Round(x0)), int(math.Round(y0)), int(math.Round(x1)), int(math.Round(y1)), width, color)
+	draw(int(math.Round(x0)), int(math.Round(y0)), int(math.Round(x1)), int(math.Round(y1)), width, color)
 }
 
 // clipSegment implements Cohen-Sutherland line clipping against the

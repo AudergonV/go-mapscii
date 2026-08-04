@@ -1,6 +1,9 @@
 package canvas
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestNewCanvasDimensions(t *testing.T) {
 	c := New(Braille, 10, 5)
@@ -209,5 +212,83 @@ func TestVerticalScale(t *testing.T) {
 		if got := New(c.shape, 1, 1).YScale(); got != c.want {
 			t.Errorf("%s: Canvas.YScale() = %v, want %v", c.name, got, c.want)
 		}
+	}
+}
+
+func TestOverlayHidesBaseGlyphAndColor(t *testing.T) {
+	c := New(Braille, 1, 1)
+	// Light every base dot, as a "fully filled" base-map cell (e.g. a
+	// water polygon) would.
+	for y := 0; y < Braille.DotsY; y++ {
+		for x := 0; x < Braille.DotsX; x++ {
+			c.Set(x, y, Color{B: 200})
+		}
+	}
+	// A single overlay dot should completely replace the display for
+	// this cell: only the overlay's (much sparser) glyph and its own
+	// color, nothing blended in from the base plane.
+	c.SetOverlay(0, 0, Color{R: 200})
+
+	frame := c.Frame()
+	want := "\x1b[38;2;200;0;0m" + string(rune(brailleBase+0x01)) + resetSeq
+	if frame != want {
+		t.Errorf("Frame() = %q, want %q (overlay should fully hide the base plane)", frame, want)
+	}
+}
+
+func TestOverlayLineOnly(t *testing.T) {
+	c := New(Braille, 4, 4)
+	c.LineOverlay(0, 0, c.Width()-1, c.Height()-1, Color{R: 1})
+	for _, cl := range c.cells {
+		if cl.mask != 0 {
+			t.Errorf("expected LineOverlay to leave the base plane untouched, got base mask %#x", cl.mask)
+		}
+	}
+	if c.cells[0].overlayMask == 0 {
+		t.Error("expected LineOverlay to light the start cell's overlay plane")
+	}
+	if c.cells[len(c.cells)-1].overlayMask == 0 {
+		t.Error("expected LineOverlay to light the end cell's overlay plane")
+	}
+}
+
+func TestLineWidthOverlayThickerCoversMoreDots(t *testing.T) {
+	countOverlayDots := func(c *Canvas) int {
+		n := 0
+		for _, cl := range c.cells {
+			for b := cl.overlayMask; b != 0; b &= b - 1 {
+				n++
+			}
+		}
+		return n
+	}
+
+	thin := New(Braille, 10, 10)
+	thin.LineWidthOverlay(0, thin.Height()/2, thin.Width()-1, thin.Height()/2, 1, Color{R: 1})
+
+	thick := New(Braille, 10, 10)
+	thick.LineWidthOverlay(0, thick.Height()/2, thick.Width()-1, thick.Height()/2, 4, Color{R: 1})
+
+	if countOverlayDots(thick) <= countOverlayDots(thin) {
+		t.Errorf("expected thicker overlay line to light more dots: thick=%d thin=%d", countOverlayDots(thick), countOverlayDots(thin))
+	}
+}
+
+func TestTextBeatsOverlayBeatsBase(t *testing.T) {
+	c := New(Braille, 1, 1)
+	c.Set(0, 0, Color{B: 1})
+	c.SetOverlay(0, 0, Color{R: 1})
+	if c.Frame() == New(Braille, 1, 1).Frame() {
+		t.Fatal("sanity check failed: expected a non-blank frame")
+	}
+	beforeText := c.Frame()
+	if !strings.Contains(beforeText, "38;2;1;0;0") {
+		t.Errorf("expected overlay color (red) to win over base color (blue), got %q", beforeText)
+	}
+
+	c.Text(0, 0, "X", Color{G: 1})
+	afterText := c.Frame()
+	if !strings.Contains(afterText, "X") || !strings.Contains(afterText, "38;2;0;1;0") {
+		t.Errorf("expected text to win over both overlay and base, got %q", afterText)
 	}
 }

@@ -62,8 +62,21 @@ type cell struct {
 	mask     byte
 	color    Color
 	hasColor bool
-	text     rune
-	hasText  bool
+
+	// overlayMask/overlayColor hold the "overlay" dot-plane, drawn
+	// with SetOverlay/LineOverlay/LineWidthOverlay. When any overlay
+	// dot is lit, the cell displays the overlay's glyph and color
+	// only - the base plane's dots and color are completely hidden
+	// underneath, rather than merged. This is what lets Map.DrawLine
+	// read as a distinct line drawn strictly on top of the base map,
+	// even on a Shape (like ASCII) too coarse to show both a base
+	// feature's dot and an overlay dot in the same cell at once.
+	overlayMask  byte
+	overlayColor Color
+	hasOverlay   bool
+
+	text    rune
+	hasText bool
 }
 
 // Canvas is a drawing surface addressed in sub-pixel ("dot")
@@ -163,6 +176,28 @@ func (c *Canvas) Set(x, y int, color Color) {
 	c.cells[idx].hasColor = true
 }
 
+// SetOverlay lights up a dot on the overlay plane at the given
+// sub-pixel coordinate. Any cell touched by an overlay dot displays
+// only the overlay's glyph and color, completely hiding whatever the
+// base plane (Set/Line/LineWidth) drew in that cell - see the cell
+// struct's overlayMask field for why. Coordinates outside the canvas
+// are ignored.
+func (c *Canvas) SetOverlay(x, y int, color Color) {
+	if x < 0 || y < 0 || x >= c.Width() || y >= c.Height() {
+		return
+	}
+	dotsX, dotsY := c.shape.DotsX, c.shape.DotsY
+	cellX, cellY := x/dotsX, y/dotsY
+	dx, dy := x%dotsX, y%dotsY
+	idx, ok := c.cellIndex(cellX, cellY)
+	if !ok {
+		return
+	}
+	c.cells[idx].overlayMask |= c.shape.Bit(dx, dy)
+	c.cells[idx].overlayColor = color
+	c.cells[idx].hasOverlay = true
+}
+
 // Unset turns off the dot at the given sub-pixel coordinate without
 // affecting the cell's color.
 func (c *Canvas) Unset(x, y int) {
@@ -211,6 +246,38 @@ func (c *Canvas) Line(x0, y0, x1, y1 int, color Color) {
 	}
 }
 
+// LineOverlay draws a straight line on the overlay plane; see
+// SetOverlay for how overlay dots take over their cell entirely.
+func (c *Canvas) LineOverlay(x0, y0, x1, y1 int, color Color) {
+	dx := abs(x1 - x0)
+	dy := -abs(y1 - y0)
+	sx, sy := 1, 1
+	if x0 > x1 {
+		sx = -1
+	}
+	if y0 > y1 {
+		sy = -1
+	}
+	err := dx + dy
+
+	x, y := x0, y0
+	for {
+		c.SetOverlay(x, y, color)
+		if x == x1 && y == y1 {
+			break
+		}
+		e2 := 2 * err
+		if e2 >= dy {
+			err += dy
+			x += sx
+		}
+		if e2 <= dx {
+			err += dx
+			y += sy
+		}
+	}
+}
+
 // LineWidth draws a straight line between two sub-pixel coordinates
 // with the given thickness, expressed in dots. A width of 1 (or less)
 // behaves exactly like Line. Thicker lines are approximated by
@@ -218,8 +285,24 @@ func (c *Canvas) Line(x0, y0, x1, y1 int, color Color) {
 // line's direction; this has no anti-aliasing, but is cheap and looks
 // reasonable at the resolutions a terminal renders.
 func (c *Canvas) LineWidth(x0, y0, x1, y1 int, width float64, color Color) {
+	stackedLines(c.Line, x0, y0, x1, y1, width, color)
+}
+
+// LineWidthOverlay draws a line on the overlay plane with the given
+// thickness; see SetOverlay for how overlay dots take over their cell
+// entirely.
+func (c *Canvas) LineWidthOverlay(x0, y0, x1, y1 int, width float64, color Color) {
+	stackedLines(c.LineOverlay, x0, y0, x1, y1, width, color)
+}
+
+// stackedLines implements the thickness approximation shared by
+// LineWidth and LineWidthOverlay: it stacks several 1-dot lines
+// (drawn via draw1px) offset perpendicular to the line's direction.
+// This has no anti-aliasing, but is cheap and looks reasonable at the
+// resolutions a terminal renders.
+func stackedLines(draw1px func(x0, y0, x1, y1 int, color Color), x0, y0, x1, y1 int, width float64, color Color) {
 	if width <= 1 {
-		c.Line(x0, y0, x1, y1, color)
+		draw1px(x0, y0, x1, y1, color)
 		return
 	}
 
@@ -241,7 +324,7 @@ func (c *Canvas) LineWidth(x0, y0, x1, y1 int, width float64, color Color) {
 		}
 		ox := int(math.Round(nx * offset))
 		oy := int(math.Round(ny * offset))
-		c.Line(x0+ox, y0+oy, x1+ox, y1+oy, color)
+		draw1px(x0+ox, y0+oy, x1+ox, y1+oy, color)
 	}
 }
 
@@ -271,6 +354,12 @@ func abs(v int) int {
 // Frame renders the canvas to a string of terminal rows separated by
 // newlines, using 24-bit ANSI escape sequences to colorize cells that
 // have a color set. Cells with no dots and no text render as spaces.
+//
+// A cell renders its topmost non-empty layer only, never a blend:
+// text (pins/labels) beats the overlay plane (drawn lines), which
+// beats the base plane (the map itself) - see the cell struct's
+// overlayMask field for why overlay dots hide the base plane outright
+// instead of merging into the same glyph.
 func (c *Canvas) Frame() string {
 	var b strings.Builder
 	for y := 0; y < c.rows; y++ {
@@ -281,19 +370,23 @@ func (c *Canvas) Frame() string {
 			cl := c.cells[idx]
 
 			var r rune
+			var color Color
+			var hasColor bool
 			switch {
 			case cl.hasText:
-				r = cl.text
+				r, color, hasColor = cl.text, cl.color, cl.hasColor
+			case cl.hasOverlay:
+				r, color, hasColor = c.shape.Glyph(cl.overlayMask), cl.overlayColor, true
 			case cl.mask != 0:
-				r = c.shape.Glyph(cl.mask)
+				r, color, hasColor = c.shape.Glyph(cl.mask), cl.color, cl.hasColor
 			default:
 				r = ' '
 			}
 
-			if cl.hasColor && r != ' ' {
-				if !haveColor || cl.color != lastColor {
-					writeColor(&b, cl.color)
-					lastColor = cl.color
+			if hasColor && r != ' ' {
+				if !haveColor || color != lastColor {
+					writeColor(&b, color)
+					lastColor = color
 					haveColor = true
 				}
 			} else if haveColor {
